@@ -5,7 +5,21 @@
 
 brain:
   source: minifly          # "minifly" or path to a .npz built by `flydrones build-brain`
+  backend: cpu             # cpu | torch | auto   (torch needs a CUDA build of PyTorch)
   seed: 0
+  # Tuning for the torch backend; ignored by the cpu backend.  These are STATIC
+  # buffer capacities and they drive the per-step work directly -- with a captured
+  # CUDA graph the replay time is nearly proportional to max_events (532480 ->
+  # 0.82x realtime, 655360 -> 0.71x on the full connectome).  Measured peaks for
+  # full MaleCNS under `flydrones bench`: 1468 spikes / 528,455 events per step, and
+  # a later run saw 1511 / 521,376 -- so max_events sits at ~96% of the observed
+  # worst case on purpose.  If your own input is hotter the backend warns with the
+  # peak it saw; raise both to that value (plus ~20% headroom) when it does.
+  torch:
+    max_spikes: 4096
+    max_events: 540672
+    use_cuda_graph: true   # capture the step into a CUDA graph; removes the per-op
+                           # CPU submission cost that dominates this workload
   lif:                     # Shiu et al. 2024 parameters; dt raised to 0.5 ms for real time
     v_rest: -52.0
     v_reset: -52.0
@@ -32,6 +46,9 @@ brain:
 #   up/down = scene moving up / down
 # ---------------------------------------------------------------------------
 inputs:
+  # 光电感受器与平衡棒的左右标注在原始数据里几乎为空,构建时由
+  # Connectome.infer_missing_sides() 用连接结构补全(photoreceptor 校验 13/13 正确),
+  # 所以这两个通路可以按 side 正常分左右。
   R16_L:   {types: ["^R1-R6$"], side: L, feature: brightness, eye: L, max_hz: 40}
   R16_R:   {types: ["^R1-R6$"], side: R, feature: brightness, eye: R, max_hz: 40}
   T4a_L:   {types: ["^T4a$", "^T5a$"], side: L, feature: ftb,  eye: L, max_hz: 120}
@@ -48,7 +65,6 @@ inputs:
   LC4_R:   {types: ["^LC4$"], side: R, feature: loom_speed, eye: R, max_hz: 150}
   HAL_L:   {types: ["(?i)haltere"], side: L, feature: yaw_neg, max_hz: 50}
   HAL_R:   {types: ["(?i)haltere"], side: R, feature: yaw_pos, max_hz: 50}
-
 imu:
   yaw_saturation_dps: 150  # yaw rate that drives haltere inputs at max_hz
 
@@ -62,6 +78,11 @@ outputs:
   DNp03_R: {types: ["^DNp03$"], side: R, note: "looming-evoked flight saccades (Curr Biol 2025)"}
   DNp01_L: {types: ["^DNp01$", "^GF$"], side: L, note: "giant fiber, escape takeoff (Ache et al. 2019)"}
   DNp01_R: {types: ["^DNp01$", "^GF$"], side: R, note: "giant fiber, escape takeoff (Ache et al. 2019)"}
+  # 前向平移流的读出。这两个类型在本连接组里的实测结果:双侧 front-to-back 光流
+  # (即飞机前进时的视觉流)使其放电 +71 / +39.5 Hz,而后退流、旋转、looming 全部 0 响应。
+  # 它们的功能未在已发表文献中详述 —— 这是本连接组的实测属性,不是文献既有的"速度神经元"。
+  DNfwd_a: {types: ["^DNae010$"], note: "forward optic-flow read-out (bilateral ftb), no response to back/rotate/loom"}
+  DNfwd_b: {types: ["^DNp72$"], note: "forward optic-flow read-out (bilateral ftb), no response to back/rotate/loom"}
 
 vision:
   width: 96                # camera frame is resized to this before encoding
@@ -89,12 +110,14 @@ decoder:
     yaw:                   # yaw rate, + = clockwise / right
       gain: 0.05
       terms: {DNg02_R: 1.0, DNg02_L: -1.0, DNp03_L: 0.8, DNp03_R: -0.8}
-    forward:
-      gain: 0.0
-      terms: {}
+    forward:               # forward speed: now driven by the optic-flow read-out below
+      # DNfwd_a/b 只对双侧 front-to-back 光流响应(飞机前进时的视觉流),对后退/旋转/loom 无响应。
+      # 这是"视觉流伺服":前进 -> 场景向后流 -> 指令加强,靠 cruise 提供基础速度、靠 safety 限幅。
+      gain: 0.002
+      terms: {DNfwd_a: 1.0, DNfwd_b: 1.0}
     lateral:
       gain: 0.0
-      terms: {}
+      terms: {}                # 侧向平移与旋转在两侧复眼的光流上不可区分,暂不接线
   cruise: 0.0              # constant forward speed you choose; looming DNs brake it
   brake_terms: {DNp03_L: 0.02, DNp03_R: 0.02, DNp01_L: 0.03, DNp01_R: 0.03}
   escape:

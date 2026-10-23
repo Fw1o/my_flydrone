@@ -1,0 +1,21 @@
+# 真机飞行配置 —— 全量连接组(完整,但实时余量很小;建议只作演示)
+#
+# 用法:
+#   flydrones fly --drone tello --config configs/fly_full.yaml `
+#                 --config configs/tello.yaml --input camera --send
+#
+# 166,700 神经元 / 25,582,837 连接。实测:GPU 1.03x,CPU 0.24x。
+#
+# ⚠ 20 Hz 控制周期只有 50 ms,而这一档要占掉约 48.5 ms —— 只剩约 1.5 ms 给视频解码、
+#   手势识别与日志。任何一点波动都会超过 safety.brain_timeout_s(0.5 s)触发悬停。
+#   真机请优先用 fly_core2 / fly_core1;全量更适合在仿真里演示或做离线分析。
+brain:
+  source: data/malecns_brain_v2.npz
+  backend: auto
+  torch:
+    # 实测峰值 1,522 脉冲 / 483,895 事件;默认 540,672 已贴近峰值(余量约 4%)
+    max_spikes: 4096
+    max_events: 540672
+
+decoder:
+  cruise: 0.2   # 基础巡航速度;前向光流读出在此基础上调制(转弯/后退不会误触发)

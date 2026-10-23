@@ -12,5 +12,5 @@ safety:
   min_alt_m: 0.4
   max_alt_m: 1.8
   min_battery_pct: 25
-decoder:
-  cruise: 0.0             # set e.g. 0.2 to let the fly cruise forward; looming brakes it
+# 巡航速度(cruise)由飞行脑配置决定,见 configs/fly_*.yaml —— 这里不要留空的 `decoder:` 键
+# (YAML 会把它解析成 None,deep-merge 时会把整个 decoder 段覆盖掉)

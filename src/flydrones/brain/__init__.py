@@ -1,4 +1,4 @@
-from .brain import Brain, load_connectome
+from .brain import Brain, load_connectome, make_network
 from .connectome import Connectome, GroupSpec, build_malecns
 from .lif import LIFNetwork, LIFParams
 from .synthetic import build_minifly
@@ -12,4 +12,5 @@ __all__ = [
     "build_malecns",
     "build_minifly",
     "load_connectome",
+    "make_network",
 ]

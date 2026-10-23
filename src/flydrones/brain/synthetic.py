@@ -51,6 +51,9 @@ def build_minifly(seed: int = 7) -> Connectome:
         _pop(pops, "DNg02", 15, s, +1.0)
         _pop(pops, "DNp03", 2, s, +1.0)
         _pop(pops, "DNp01", 1, s, +1.0)
+        # 前向平移流的读出(真实数据里对应 DNae010 / DNp72,见 defaults.yaml 的 outputs)
+        _pop(pops, "DNae010", 2, s, +1.0)
+        _pop(pops, "DNp72", 2, s, +1.0)
 
     types, sides, sign = [], [], []
     index: dict[tuple[str, str], np.ndarray] = {}
@@ -99,6 +102,10 @@ def build_minifly(seed: int = 7) -> Connectome:
         connect(g("HS", s), g("DNg02", s), 11, p=0.9)
         connect(g("HS", s), g("LAL_inh", o), 14, p=0.9)
         connect(g("LAL_inh", o), g("DNg02", o), 12, p=0.9)
+
+        # --- HS -> forward read-out: horizontal motion drives the "forward speed" channel
+        connect(g("HS", s), g("DNae010", s), 9, p=0.9)
+        connect(g("HS", s), g("DNp72", s), 9, p=0.9)
 
         # --- VS -> DNg02 on both sides: sinking -> more lift
         connect(g("VS", s), g("DNg02", s), 10, p=0.9)

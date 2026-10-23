@@ -37,3 +37,71 @@ def test_cli_demo_and_bench(tmp_path, capsys):
 
 def test_cli_fly_sim_dry(capsys):
     assert main(["fly", "--drone", "sim", "--input", "camera", "--seconds", "3"]) == 0
+
+
+def test_load_config_merges_multiple_files(tmp_path):
+    """A flight combines a brain config with a drone config: later files win."""
+    (tmp_path / "brain.yaml").write_text(
+        "brain:\n"
+        "  source: data/brain.npz\n"
+        "  torch:\n"
+        "    max_events: 262144\n"
+        "safety:\n"
+        "  max_throttle: 0.9\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "drone.yaml").write_text(
+        "brain:\n"
+        "  torch:\n"
+        "    max_events: 16384\n"
+        "safety:\n"
+        "  max_throttle: 0.5\n"
+        "vision:\n"
+        "  flow_gain: 2.0\n",
+        encoding="utf-8",
+    )
+    cfg = load_config([tmp_path / "brain.yaml", tmp_path / "drone.yaml"])
+    assert cfg["brain"]["source"] == "data/brain.npz"          # only in the first file
+    assert cfg["brain"]["torch"]["max_events"] == 16384        # second file wins
+    assert cfg["brain"]["torch"]["max_spikes"] == 4096         # untouched default
+    assert cfg["safety"]["max_throttle"] == 0.5                # second file wins
+    assert cfg["safety"]["max_alt_m"] == 2.2                   # untouched default
+    assert cfg["vision"]["flow_gain"] == 2.0
+
+
+def test_load_config_single_path_and_missing_file(tmp_path):
+    single = tmp_path / "one.yaml"
+    single.write_text("safety:\n  max_yaw: 0.3\n", encoding="utf-8")
+    assert load_config(single)["safety"]["max_yaw"] == 0.3       # single path still works
+    assert load_config()["brain"]["backend"] == "cpu"            # no config at all
+    try:
+        load_config([tmp_path / "missing.yaml"])
+    except FileNotFoundError as e:
+        assert "missing.yaml" in str(e)
+    else:
+        raise AssertionError("a missing --config file must raise, not silently pass")
+
+
+def test_trailing_empty_key_does_not_wipe_a_section(tmp_path):
+    """`decoder:` with only comments under it parses as None - it must not clobber defaults."""
+    bad = tmp_path / "empty_section.yaml"
+    bad.write_text("safety:\n  max_yaw: 0.3\ndecoder:\n  # nothing here\n", encoding="utf-8")
+    cfg = load_config([bad])
+    assert cfg["safety"]["max_yaw"] == 0.3
+    assert isinstance(cfg["decoder"], dict), "an empty YAML key must not turn a section into None"
+    assert cfg["decoder"]["axes"]["throttle"]["gain"] > 0
+
+
+def test_every_shipped_config_loads_and_keeps_the_decoder():
+    """Every configs/*.yaml must leave a usable brain/decoder (catches empty-key mistakes)."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "configs"
+    configs = sorted(root.glob("*.yaml"))
+    assert configs, "no shipped configs found"
+    for path in configs:
+        cfg = load_config([path])
+        assert isinstance(cfg.get("brain"), dict), f"{path.name}: brain is not a mapping"
+        assert isinstance(cfg.get("decoder"), dict), f"{path.name}: decoder is not a mapping"
+        assert cfg["decoder"].get("axes"), f"{path.name}: decoder.axes is missing"
+        assert cfg["brain"].get("source"), f"{path.name}: brain.source is missing"

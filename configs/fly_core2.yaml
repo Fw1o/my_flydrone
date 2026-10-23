@@ -1,0 +1,19 @@
+# 真机飞行配置 —— core-hops 2(推荐档)
+#
+# 用法(脑配置在前,机型配置在后,后者覆盖同名项):
+#   flydrones fly --drone tello --config configs/fly_core2.yaml `
+#                 --config configs/tello.yaml --input both --live --send
+#
+# 107,064 神经元 / 17,386,387 连接。实测:GPU 1.72x 实时,CPU 仅 0.61x(真机必须用 GPU)。
+# 20 Hz 控制周期 50 ms 中约占用 29 ms,剩约 21 ms 给视频解码、手势识别与日志。
+brain:
+  source: data/malecns_core2_v2.npz
+  backend: auto          # 有 CUDA 就用 GPU;没有则退回 CPU,但 CPU 达不到实时
+  torch:
+    # 容量必须匹配这一档:实测峰值 564 脉冲 / 199,396 事件。
+    # 沿用全量的 540,672 会让每步白遍历 34 万个空槽位,实时比明显下降。
+    max_spikes: 1024
+    max_events: 262144
+
+decoder:
+  cruise: 0.2   # 基础巡航速度;前向光流读出在此基础上调制(转弯/后退不会误触发)

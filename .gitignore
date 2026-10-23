@@ -18,3 +18,13 @@ flight*.csv
 Thumbs.db
 .idea/
 .vscode/
+
+# tooling / local scratch (not part of the project)
+.reasonix/
+reasonix.toml
+/test.py
+/test2.py
+/test3.py
+/full_demo.gif
+/my_demo.gif
+/my_slow_demo.gif

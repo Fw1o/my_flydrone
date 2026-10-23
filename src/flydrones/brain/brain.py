@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import warnings
 from pathlib import Path
@@ -23,6 +24,38 @@ def load_connectome(source: str | Path) -> Connectome:
             "`flydrones build-brain` first, or use brain.source: minifly"
         )
     return Connectome.load(path)
+
+
+def make_network(weights, params: "LIFParams", seed: int, bcfg: dict):
+    """Build the LIF network implementation selected by ``brain.backend``.
+
+    * ``cpu`` (default) -- NumPy/SciPy :class:`LIFNetwork`
+    * ``torch`` -- CUDA :class:`~flydrones.brain.lif_torch.TorchLIFNetwork`
+    * ``auto`` -- torch when a usable CUDA device is present, otherwise cpu
+
+    The torch backend is imported lazily so the CPU path keeps working in
+    environments where PyTorch is not installed.  An explicit ``torch`` request
+    raises instead of silently falling back to the slower CPU path.
+    """
+    backend = str(bcfg.get("backend") or "cpu").lower()
+    if backend not in ("cpu", "torch", "auto"):
+        raise ValueError(f"unknown brain.backend {backend!r}; expected cpu|torch|auto")
+    if backend == "cpu":
+        return LIFNetwork(weights, params, seed=seed)
+
+    try:
+        from .lif_torch import TorchLIFNetwork, torch_device_available
+    except ImportError:
+        if backend == "torch":
+            raise
+        return LIFNetwork(weights, params, seed=seed)
+
+    if backend == "auto" and not torch_device_available():
+        warnings.warn("brain.backend=auto but no CUDA device is available; using the CPU backend", stacklevel=2)
+        return LIFNetwork(weights, params, seed=seed)
+
+    opts = dict(bcfg.get("torch") or {})
+    return TorchLIFNetwork(weights, params, seed=seed, **opts)
 
 
 class Brain:
@@ -50,11 +83,30 @@ class Brain:
 
         params = LIFParams.from_dict(bcfg.get("lif"))
         seed = bcfg.get("seed", 0) if seed is None else seed
-        self.net = _net if _net is not None else LIFNetwork(connectome.weights, params, seed=seed)
+        self.net = _net if _net is not None else make_network(connectome.weights, params, seed, bcfg)
         for g, mv in (bcfg.get("bias") or {}).items():
             idx = connectome.group(g)
+            if idx.size == 0:
+                # A bias key may also be a cell-type pattern: group names only resolve
+                # when they are listed under `inputs`/`outputs`, and real configs use
+                # subtypes such as `DNg02_a` that never appear there.
+                try:
+                    idx = connectome.select([g])
+                except re.error as e:
+                    warnings.warn(
+                        f"brain.bias entry {g!r} is not a valid cell-type pattern ({e}); ignored",
+                        stacklevel=2,
+                    )
+                    continue
             if idx.size:
                 self.net.set_bias(idx, float(mv))
+            else:
+                warnings.warn(
+                    f"brain.bias entry {g!r} matches no neurons in {connectome.name} and has no "
+                    "effect; use a group name from `inputs`/`outputs` or a cell-type pattern "
+                    "(see `flydrones inspect`)",
+                    stacklevel=2,
+                )
 
         rng = np.random.default_rng(seed)
         n_rec = int(bcfg.get("record_neurons", 400))

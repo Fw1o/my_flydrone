@@ -1,0 +1,19 @@
+# 真机飞行配置 —— core-hops 1(最稳,CPU 也能实时)
+#
+# 用法:
+#   flydrones fly --drone tello --config configs/fly_core1.yaml `
+#                 --config configs/tello.yaml --input gesture --send
+#
+# 18,726 神经元 / 397,452 连接。实测:GPU 3.65x,CPU 2.41x(都实时)。
+# 只保留"距输入 ≤1 跳下游 且 距输出 ≤1 跳上游"的感觉运动回路,行为最保守,
+# 适合第一次真机试飞或没有可用 GPU 的机器。
+brain:
+  source: data/malecns_core1_v2.npz
+  backend: auto
+  torch:
+    # 实测峰值 330 脉冲 / 11,333 事件
+    max_spikes: 512
+    max_events: 16384
+
+decoder:
+  cruise: 0.2   # 基础巡航速度;前向光流读出在此基础上调制(转弯/后退不会误触发)

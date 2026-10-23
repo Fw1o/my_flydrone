@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -105,6 +106,60 @@ class Connectome:
     def group(self, name: str) -> np.ndarray:
         return self.groups.get(name, np.zeros(0, dtype=np.int64))
 
+    def infer_missing_sides(self, min_agreement: float = 0.6, passes: int = 2) -> int:
+        """Fill in missing L/R side labels from the sides of connected neurons.
+
+        MaleCNS leaves ``somaSide`` empty for whole sensory populations: 3,364 of
+        the 3,377 photoreceptors (``R1-R6``) and all 205 haltere afferents.  Those
+        neurons are still wired to partners that *are* labelled, and both the optic
+        lobe and the VNC are strongly ipsilateral, so a majority vote over the
+        partners recovers the side.
+
+        Validated against the 13 photoreceptors that do carry a label: 13/13
+        correct, median agreement 1.00 (all partners on the same side).  Haltere
+        afferents are weaker (median 0.73, split 104/98) because they project
+        bilaterally, so the vote is a *best effort* there -- callers that need
+        ground truth should check neuPrint.
+
+        Parameters
+        ----------
+        min_agreement:
+            Fraction of labelled partners that must agree before a side is written,
+            so a 5-vs-4 split is left ambiguous rather than guessed.
+        passes:
+            Run the vote more than once so a filled-in neuron can inform its own
+            unlabelled neighbours.
+
+        Returns the number of neurons that gained a side.
+        """
+        sides = np.array(self.sides, dtype=str, copy=True)
+        W = self.weights.tocsc()
+        indptr, indices = W.indptr, W.indices
+        filled_total = 0
+        for _ in range(max(1, passes)):
+            missing = np.flatnonzero(sides == "")
+            if missing.size == 0:
+                break
+            filled = 0
+            for j in missing:
+                lo, hi = indptr[j], indptr[j + 1]
+                if hi <= lo:
+                    continue
+                partner_sides = sides[indices[lo:hi]]
+                n_l = int(np.count_nonzero(partner_sides == "L"))
+                n_r = int(np.count_nonzero(partner_sides == "R"))
+                total = n_l + n_r
+                if total == 0 or max(n_l, n_r) / total < min_agreement:
+                    continue
+                sides[j] = "L" if n_l > n_r else "R"
+                filled += 1
+            filled_total += filled
+            if filled == 0:
+                break
+        self.sides = sides
+        self.meta["inferred_sides"] = filled_total
+        return filled_total
+
     # ------------------------------------------------------------- io
     def save(self, path: str | Path) -> Path:
         path = Path(path)
@@ -126,14 +181,23 @@ class Connectome:
         return path
 
     @classmethod
-    def load(cls, path: str | Path) -> Connectome:
+    def load(cls, path: str | Path, infer_sides: bool = True) -> Connectome:
+        """Load a brain file, recovering missing left/right labels by default.
+
+        Files built before the side-inference step shipped carry empty ``somaSide``
+        for whole sensory populations (photoreceptors, haltere afferents), which
+        silently empties the brightness / haltere input groups once a config asks
+        for a side.  When more than 5% of the neurons are unlabelled we fill them
+        in from the wiring (0.1 s on the full connectome) and say so; a file that
+        was already completed (or a synthetic one) is left untouched.
+        """
         z = np.load(path, allow_pickle=False)
         W = sparse.csc_matrix((z["data"], z["indices"], z["indptr"]), shape=tuple(z["shape"]))
         meta = json.loads(str(z["meta"]))
         groups = {k: np.asarray(v, dtype=np.int64) for k, v in json.loads(str(z["groups"])).items()}
         sc = z["superclass"]
         bid = z["body_ids"]
-        return cls(
+        conn = cls(
             name=meta.pop("name", Path(path).stem),
             weights=W,
             types=z["types"],
@@ -143,6 +207,19 @@ class Connectome:
             groups=groups,
             meta=meta,
         )
+        if infer_sides and conn.n:
+            missing = int(np.count_nonzero(conn.sides.astype(str) == ""))
+            if missing > 0.05 * conn.n:
+                filled = conn.infer_missing_sides()
+                if filled:
+                    warnings.warn(
+                        f"{Path(path).name} had {missing:,} neurons without a left/right label "
+                        f"({missing / conn.n:.0%}); inferred {filled:,} of them from the wiring. "
+                        "Rebuild with `flydrones build-brain` (or run `flydrones fill-sides`) to "
+                        "store them.",
+                        stacklevel=2,
+                    )
+        return conn
 
     # ------------------------------------------------------------- subgraph
     def subgraph(self, keep: np.ndarray, name: str | None = None) -> Connectome:
@@ -233,6 +310,7 @@ def build_malecns(
     nt_default_sign: float = 1.0,
     drop_status: tuple[str, ...] = ("Glia",),
     verbose: bool = True,
+    infer_sides: bool = True,
 ) -> Connectome:
     """Build a signed connectome from the MaleCNS v1.0 flat feather files.
 
@@ -251,7 +329,7 @@ def build_malecns(
     ann = feather.read_table(data_dir / MALECNS_FILES["annotations"]).to_pandas()
     body_col = _pick(ann.columns, "bodyId", "body_id", "body")
     type_col = _pick(ann.columns, "type", "cell_type", "celltype")
-    side_col = _pick(ann.columns, "rootSide", "somaSide", "side", "root_side", "soma_side")
+    side_col = _pick(ann.columns, "somaSide", "rootSide", "side",  "soma_side","root_side")
     sc_col = _pick(ann.columns, "superclass", "super_class")
     status_col = _pick(ann.columns, "status", "statusLabel")
     if body_col is None or type_col is None:
@@ -314,10 +392,24 @@ def build_malecns(
     log(f"weights: scanned {total:,} rows, kept {W.nnz:,} connections (>= {min_synapses} synapses)")
 
     sides = ann[side_col].astype(str).str.upper().str[:1].replace({"N": "", "U": ""}).to_numpy() if side_col else np.array([""] * n)
-    return Connectome(
+
+    # Haltere (balancing organ) neurons carry their label only in `subclass`, so
+    # fold it into the type string for patterns like "(?i)haltere" to match.
+    subclass_col = _pick(ann.columns, "subclass", "sub_class")
+    type_vals = ann[type_col].fillna("").astype(str)
+    if subclass_col:
+        subclass_vals = ann[subclass_col].fillna("").astype(str)
+        types = np.array(
+            [f"{t}|haltere" if s.lower() == "haltere" else t for t, s in zip(type_vals, subclass_vals)],
+            dtype=str,
+        )
+    else:
+        types = type_vals.to_numpy()
+
+    conn = Connectome(
         name="malecns-v1.0",
         weights=W,
-        types=ann[type_col].fillna("").astype(str).to_numpy(),
+        types=types,
         sides=sides,
         superclass=ann[sc_col].astype(str).to_numpy() if sc_col else None,
         body_ids=body_ids,
@@ -327,3 +419,15 @@ def build_malecns(
             "min_synapses": min_synapses,
         },
     )
+
+    # The dataset leaves `somaSide` empty for whole sensory populations (all 205
+    # haltere afferents, 3,364 of the 3,377 photoreceptors), which silently empties
+    # the brightness / haltere input groups once a config asks for a side.  Recover
+    # them from the wiring here so the saved file is complete from the start.
+    if infer_sides:
+        missing = int(np.count_nonzero(conn.sides.astype(str) == ""))
+        filled = conn.infer_missing_sides()
+        if filled:
+            log(f"sides: {missing:,} neurons had no L/R label, inferred {filled:,} from connectivity")
+
+    return conn

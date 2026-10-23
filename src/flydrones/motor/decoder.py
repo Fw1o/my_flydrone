@@ -20,7 +20,7 @@ from .command import AXES, FlightCommand
 
 class MotorDecoder:
     def __init__(self, cfg: dict):
-        d = cfg.get("decoder", {})
+        d = cfg.get("decoder") or {}
         self.smoothing = float(d.get("smoothing", 0.35))
         self.deadzone = float(d.get("deadzone", 0.04))
         self.settle_s = float(d.get("settle_s", 1.5))

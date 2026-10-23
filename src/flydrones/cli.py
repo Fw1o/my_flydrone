@@ -26,6 +26,8 @@ def _cfg(args):
     over = {}
     if getattr(args, "brain", None):
         over.setdefault("brain", {})["source"] = args.brain
+    if getattr(args, "backend", None):
+        over.setdefault("brain", {})["backend"] = args.backend
     return load_config(getattr(args, "config", None), over)
 
 
@@ -212,7 +214,8 @@ def cmd_build(args) -> int:
     from .config import load_config
 
     cfg = load_config(args.config)
-    c = build_malecns(args.data_dir, min_synapses=args.min_synapses)
+    c = build_malecns(args.data_dir, min_synapses=args.min_synapses,
+                      infer_sides=not args.no_fill_sides)
     print(c.summary())
     b = Brain(c, cfg)  # resolves groups and warns about empty ones
     for name in list(b.input_specs) + list(b.output_specs):
@@ -222,6 +225,28 @@ def cmd_build(args) -> int:
         print("sensorimotor core:", c.summary())
     out = c.save(args.out)
     print(f"saved -> {out}\nuse it: flydrones demo --brain {out}")
+    return 0
+
+
+def cmd_fill_sides(args) -> int:
+    """Recover missing left/right labels in an already-built brain file."""
+    from pathlib import Path
+
+    from .brain import Connectome
+
+    src = Path(args.brain)
+    c = Connectome.load(src, infer_sides=False)          # load as stored, do not auto-fill
+    missing = int(np.count_nonzero(c.sides.astype(str) == ""))
+    print(f"{src.name}: {c.n:,} neurons, {missing:,} without an L/R label ({missing / c.n:.1%})")
+    if not missing:
+        print("nothing to do")
+        return 0
+    filled = c.infer_missing_sides(min_agreement=args.min_agreement)
+    unclear = int(np.count_nonzero(c.sides.astype(str) == ""))
+    print(f"inferred {filled:,} sides from connectivity; {unclear:,} left unclear")
+    out = Path(args.out) if args.out else src.with_name(f"{src.stem}_sided.npz")
+    c.save(out)
+    print(f"saved -> {out}")
     return 0
 
 
@@ -257,6 +282,8 @@ def cmd_bench(args) -> int:
 
     cfg = _cfg(args)
     brain = _brain(cfg)
+    net = brain.net
+    print(f"backend: {type(net).__name__} on {getattr(net, 'device', 'cpu')}")
     rng = np.random.default_rng(0)
     inputs = {k: rng.random(brain.connectome.group(k).size) * 60 for k in brain.input_specs}
     brain.tick(inputs, 100)
@@ -286,8 +313,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def common(sp):
-        sp.add_argument("--config", help="YAML file overriding defaults")
         sp.add_argument("--brain", help="minifly or path to a built .npz brain")
+        sp.add_argument("--config", action="append", metavar="YAML",
+                        help="YAML overrides, repeatable: later files win "
+                             "(e.g. --config configs/fly_core2.yaml --config configs/tello.yaml)")
+        sp.add_argument("--backend", choices=["cpu", "torch", "auto"],
+                        help="LIF backend: cpu (numpy) | torch (CUDA) | auto")
 
     sp = sub.add_parser("demo", help="simulated drone + scripted hand gestures")
     common(sp)
@@ -336,7 +367,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--core-hops", type=int, default=0, help="keep only neurons within N synapses of inputs and outputs")
     sp.add_argument("--max-neurons", type=int)
     sp.add_argument("--out", default="data/malecns_brain.npz")
+    sp.add_argument("--no-fill-sides", action="store_true",
+                    help="keep the raw somaSide labels (do not infer the missing ones)")
     sp.set_defaults(func=cmd_build)
+
+    sp = sub.add_parser("fill-sides", help="infer missing L/R labels in a built brain from its wiring")
+    sp.add_argument("--brain", required=True, help="path to a .npz built by `flydrones build-brain`")
+    sp.add_argument("--out", help="output .npz (default: <name>_sided.npz)")
+    sp.add_argument("--min-agreement", type=float, default=0.6,
+                    help="fraction of labelled partners that must agree (default 0.6)")
+    sp.set_defaults(func=cmd_fill_sides)
 
     sp = sub.add_parser("inspect", help="list input/output groups and poke each input")
     common(sp)

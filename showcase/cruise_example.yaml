@@ -1,0 +1,10 @@
+# 打开"前向巡航"的示例配置。
+#
+# 用法(注意只需一个 --config):
+#   flydrones demo --brain data\malecns_brain_v2.npz --config showcase\cruise_example.yaml --seconds 16
+#
+# 为什么只写 cruise:decoder 的 forward / lateral 两轴默认未接线(gain=0、terms={}),
+# 因为连接组里没有可靠的"前进速度"神经元(见 showcase/README.md 第三节的实测与文献)。
+# cruise 就是"你选一个巡航速度",遇到 looming 时仍会自动刹车(brake_terms)。
+decoder:
+  cruise: 0.35

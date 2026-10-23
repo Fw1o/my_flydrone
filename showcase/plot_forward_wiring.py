@@ -22,7 +22,7 @@ base, cru = pd.read_csv(base_csv), pd.read_csv(cru_csv)
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.5, 6.2))
 
 # ------------------------------------------------------------- left: path
-for lo, hi, label in [
+for lo, hi, _label in [
     ((1.2, -0.25), (1.7, 0.25), "椅子"),
     ((-2.9, 1.2), (-1.3, 2.9), "床"),
     ((2.4, -2.9), (2.9, -1.9), "衣柜"),
@@ -42,10 +42,13 @@ ax1.set_ylim(-3.2, 3.2)
 ax1.set_aspect("equal")
 ax1.set_xlabel("x (m)")
 ax1.set_ylabel("y (m)")
-ax1.set_title("俯视轨迹:默认配置几乎原地打转(位移 %.2f m),\n打开 cruise 后正常前进(位移 %.2f m)"
-              % (max(base["x"].max() - base["x"].min(), base["y"].max() - base["y"].min()),
-                 max(cru["x"].max() - cru["x"].min(), cru["y"].max() - cru["y"].min())),
-              fontsize=11)
+base_disp = max(base["x"].max() - base["x"].min(), base["y"].max() - base["y"].min())
+cru_disp = max(cru["x"].max() - cru["x"].min(), cru["y"].max() - cru["y"].min())
+ax1.set_title(
+    f"俯视轨迹:默认配置几乎原地打转(位移 {base_disp:.2f} m),\n"
+    f"打开 cruise 后正常前进(位移 {cru_disp:.2f} m)",
+    fontsize=11,
+)
 ax1.legend(loc="upper left", fontsize=9)
 ax1.grid(alpha=0.3)
 

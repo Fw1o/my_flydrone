@@ -17,7 +17,7 @@ torch = pytest.importorskip("torch")
 
 import warnings  # noqa: E402
 
-from flydrones.brain.lif import LIFNetwork, LIFParams, StepStats  # noqa: E402
+from flydrones.brain.lif import LIFNetwork, LIFParams  # noqa: E402
 from flydrones.brain.lif_torch import TorchLIFNetwork  # noqa: E402
 
 pytestmark = pytest.mark.skipif(

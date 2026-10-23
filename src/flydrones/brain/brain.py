@@ -26,7 +26,7 @@ def load_connectome(source: str | Path) -> Connectome:
     return Connectome.load(path)
 
 
-def make_network(weights, params: "LIFParams", seed: int, bcfg: dict):
+def make_network(weights, params: LIFParams, seed: int, bcfg: dict):
     """Build the LIF network implementation selected by ``brain.backend``.
 
     * ``cpu`` (default) -- NumPy/SciPy :class:`LIFNetwork`

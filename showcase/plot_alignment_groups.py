@@ -58,7 +58,7 @@ ax.set_title(
     "蓝 = 输入组 · 青 = 侧向由推断补全的输入组 · 绿 = 输出组 · 红 = 未匹配",
     fontsize=12,
 )
-for i, (k, n, role) in enumerate(rows):
+for i, (_name, n, _role) in enumerate(rows):
     ax.text(max(n, 0.6) * 1.12, i, f"{n:,}", va="center", fontsize=8.5, color="#333333")
 ax.grid(axis="x", alpha=0.3)
 fig.text(

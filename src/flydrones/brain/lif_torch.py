@@ -61,7 +61,7 @@ class TorchLIFNetwork:
 
     def __init__(
         self,
-        weights: "_sparse.spmatrix",
+        weights: _sparse.spmatrix,
         params: LIFParams | None = None,
         seed: int | None = 0,
         device: str | None = None,
@@ -198,7 +198,7 @@ class TorchLIFNetwork:
         self._graph_failed = False
         self._capacity_warned = False
 
-    def copy(self, seed: int | None = None) -> "TorchLIFNetwork":
+    def copy(self, seed: int | None = None) -> TorchLIFNetwork:
         """Same wiring, independent neuron state and RNG (for swarms)."""
         clone = TorchLIFNetwork.__new__(TorchLIFNetwork)
         clone.p = self.p
